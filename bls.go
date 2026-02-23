@@ -133,10 +133,6 @@ func voteSignMessage(phase Phase, view int, blockHash string) string {
 	return fmt.Sprintf("HOTSTUFF|%s|%d|%s", phase, view, blockHash)
 }
 
-func aggQCSignMessage(view int, hash string) string {
-	return fmt.Sprintf("AGGQC|%d|%s", view, hash)
-}
-
 // hashToG2 使用 BLS DST 将消息映射到 G2。
 func hashToG2(message string) (*bls12381.PointG2, error) {
 	g2 := bls12381.NewG2()
@@ -146,23 +142,6 @@ func hashToG2(message string) (*bls12381.PointG2, error) {
 func parseSignature(sigBytes []byte) (*bls12381.PointG2, error) {
 	g2 := bls12381.NewG2()
 	return g2.FromCompressed(sigBytes)
-}
-
-// aggregateSignatures 将多个 G2 签名聚合为一个。
-func aggregateSignatures(sigList [][]byte) ([]byte, bool) {
-	if len(sigList) == 0 {
-		return nil, false
-	}
-	g2 := bls12381.NewG2()
-	agg := g2.Zero()
-	for _, sigBytes := range sigList {
-		sig, err := g2.FromCompressed(sigBytes)
-		if err != nil {
-			return nil, false
-		}
-		g2.Add(agg, agg, sig)
-	}
-	return g2.ToCompressed(agg), true
 }
 
 func (p *hotsutff) getPublicKey(nodeID string) *blsPublicKey {
@@ -204,25 +183,6 @@ func (p *hotsutff) signVote(phase Phase, view int, blockHash string) []byte {
 	return g2.ToCompressed(sig)
 }
 
-// signAggQC 使用本地私钥对AggQC hash签名。
-func (p *hotsutff) signAggQC(view int, hash string) []byte {
-	if p.node.blsSk == nil {
-		return nil
-	}
-	msg := aggQCSignMessage(view, hash)
-	digest, err := hashToG2(msg)
-	if err != nil {
-		log.Printf("BLS hash失败: %v", err)
-		return nil
-	}
-	g2 := bls12381.NewG2()
-	sig := g2.New()
-	p.signMu.Lock()
-	g2.MulScalarBig(sig, digest, p.node.blsSk.sk)
-	p.signMu.Unlock()
-	return g2.ToCompressed(sig)
-}
-
 // verifyVoteSig 使用公钥验证单个投票签名。
 func (p *hotsutff) verifyVoteSig(nodeID string, phase Phase, view int, blockHash string, sigBytes []byte) bool {
 	if len(sigBytes) == 0 {
@@ -247,91 +207,23 @@ func (p *hotsutff) verifyVoteSig(nodeID string, phase Phase, view int, blockHash
 	return engine.Check()
 }
 
-// verifyAggQCVoteSig 使用公钥验证AggQC签名。
-func (p *hotsutff) verifyAggQCVoteSig(nodeID string, view int, hash string, sigBytes []byte) bool {
-	if len(sigBytes) == 0 {
-		return false
-	}
-	pub := p.getPublicKey(nodeID)
-	if pub == nil {
-		return false
-	}
-	sig, err := parseSignature(sigBytes)
-	if err != nil {
-		return false
-	}
-	msg := aggQCSignMessage(view, hash)
-	digest, err := hashToG2(msg)
-	if err != nil {
-		return false
-	}
-	engine := bls12381.NewEngine()
-	engine.AddPair(pub.pk, digest)
-	engine.AddPairInv(engine.G1.One(), sig)
-	return engine.Check()
-}
-
-// aggregatePublicKeys 对公钥求和用于验签。
-func (p *hotsutff) aggregatePublicKeys(signers []string) (*blsPublicKey, bool) {
-	if len(signers) == 0 {
-		return nil, false
-	}
-	g1 := bls12381.NewG1()
-	agg := g1.Zero()
-	for _, id := range signers {
-		pk := p.getPublicKey(id)
-		if pk == nil {
-			return nil, false
-		}
-		g1.Add(agg, agg, pk.pk)
-	}
-	return &blsPublicKey{pk: agg}, true
-}
-
-// verifyQCSignature 验证 QC 的聚合签名。
+// verifyQCSignature 验证 QC 中每条数字签名。
 func (p *hotsutff) verifyQCSignature(qc *QC) bool {
-	if qc == nil || len(qc.AggSig) == 0 {
+	if qc == nil || len(qc.Votes) < threshold {
 		return false
 	}
-	aggPub, ok := p.aggregatePublicKeys(qc.Signers)
-	if !ok {
-		return false
+	seen := make(map[string]bool)
+	for _, vote := range qc.Votes {
+		if vote.Phase != qc.Phase || vote.View != qc.View || vote.BlockHash != qc.BlockHash {
+			return false
+		}
+		if seen[vote.NodeID] {
+			continue
+		}
+		seen[vote.NodeID] = true
+		if !p.verifyVoteSig(vote.NodeID, vote.Phase, vote.View, vote.BlockHash, vote.Sig) {
+			return false
+		}
 	}
-	sig, err := parseSignature(qc.AggSig)
-	if err != nil {
-		return false
-	}
-	msg := voteSignMessage(qc.Phase, qc.View, qc.BlockHash)
-	hash, err := hashToG2(msg)
-	if err != nil {
-		return false
-	}
-	engine := bls12381.NewEngine()
-	engine.AddPair(aggPub.pk, hash)
-	engine.AddPairInv(engine.G1.One(), sig)
-	return engine.Check()
-}
-
-// verifyAggQCSignature 验证 AggQC 的聚合签名。
-func (p *hotsutff) verifyAggQCSignature(agg *AggQC) bool {
-	if agg == nil || len(agg.AggSig) == 0 {
-		return false
-	}
-	aggPub, ok := p.aggregatePublicKeys(agg.Signers)
-	if !ok {
-		return false
-	}
-	sig, err := parseSignature(agg.AggSig)
-	if err != nil {
-		return false
-	}
-	msg := aggQCSignMessage(agg.View, agg.Hash)
-	digest, err := hashToG2(msg)
-	if err != nil {
-		return false
-	}
-	engine := bls12381.NewEngine()
-	engine.AddPair(aggPub.pk, digest)
-	engine.AddPairInv(engine.G1.One(), sig)
-	return engine.Check()
+	return len(seen) >= threshold
 }

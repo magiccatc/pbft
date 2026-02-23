@@ -15,9 +15,9 @@ type Message struct {
 type Phase string
 
 const (
-	phasePrepare   Phase = "prepare"
-	phasePreCommit Phase = "precommit"
-	phaseCommit    Phase = "commit"
+	phasePrePrepare Phase = "preprepare"
+	phasePrepare    Phase = "prepare"
+	phaseCommit     Phase = "commit"
 )
 
 // 教学版Fast-HotStuff的区块结构（固定leader、简化view切换、批处理）
@@ -36,32 +36,7 @@ type QC struct {
 	View      int
 	BlockHash string
 	Phase     Phase
-	Signers   []string
-	AggSig    []byte
-}
-
-// Aggregate-QC（view-change阶段的QC集合证明）
-type AggQC struct {
-	View    int
-	Hash    string
-	QCs     []QC
-	Signers []string
-	AggSig  []byte
-}
-
-// AggQCRequest消息：leader请求副本对QC列表hash签名
-type AggQCRequest struct {
-	View int
-	Hash string
-	QCs  []QC
-}
-
-// AggQCVote消息：副本对AggQC hash签名返回
-type AggQCVote struct {
-	View   int
-	Hash   string
-	NodeID string
-	Sig    []byte
+	Votes     []Vote
 }
 
 // Proposal消息：leader提议新区块（携带完整请求）
@@ -69,7 +44,6 @@ type Proposal struct {
 	View     int
 	Block    Block
 	Requests []Request
-	AggQC    *AggQC
 }
 
 // Vote消息：副本对不同阶段投票
@@ -99,17 +73,11 @@ type NewViewMsg struct {
 type command string
 
 const (
-	cRequest       command = "request"
-	cproposal      command = "proposal"
-	cnewView       command = "newView"
-	cmsgPrepare    command = "msgPrepare"
-	cvotePrepare   command = "votePrepare"
-	cmsgPreCommit  command = "msgPreCommit"
-	cvotePreCommit command = "votePreCom"
-	cmsgCommit     command = "msgCommit"
-	cvoteCommit    command = "voteCommit"
-	cmsgCommitQC   command = "msgCommitQC"
-	cmsgFastQC     command = "msgFastQC"
-	caggQCReq      command = "aggQCReq"
-	caggQCVote     command = "aggQCVote"
+	cRequest     command = "request"
+	cproposal    command = "proposal"
+	cnewView     command = "newView"
+	cmsgPrepare  command = "msgPrepare"
+	cvotePrepare command = "votePrepare"
+	cmsgCommit   command = "msgCommit"
+	cvoteCommit  command = "voteCommit"
 )
