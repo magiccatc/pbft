@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log"
-	"sort"
 )
 
 // 生成随机字符串
@@ -96,51 +95,6 @@ func computeBlockHash(block Block) string {
 		Proposer:   block.Proposer,
 		CommandIDs: block.CommandIDs,
 	})
-	if err != nil {
-		log.Panic(err)
-	}
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:])
-}
-
-// computeAggQCHash 对AggQC中的QC列表做确定性哈希。
-func computeAggQCHash(qcs []QC) string {
-	type qcForHash struct {
-		View      int
-		BlockHash string
-		Phase     Phase
-		Signers   []string
-		AggSig    []byte
-	}
-
-	sorted := make([]QC, 0, len(qcs))
-	for _, qc := range qcs {
-		sorted = append(sorted, qc)
-	}
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].View != sorted[j].View {
-			return sorted[i].View < sorted[j].View
-		}
-		if sorted[i].BlockHash != sorted[j].BlockHash {
-			return sorted[i].BlockHash < sorted[j].BlockHash
-		}
-		return sorted[i].Phase < sorted[j].Phase
-	})
-
-	items := make([]qcForHash, 0, len(sorted))
-	for _, qc := range sorted {
-		signers := append([]string(nil), qc.Signers...)
-		sort.Strings(signers)
-		items = append(items, qcForHash{
-			View:      qc.View,
-			BlockHash: qc.BlockHash,
-			Phase:     qc.Phase,
-			Signers:   signers,
-			AggSig:    qc.AggSig,
-		})
-	}
-
-	data, err := json.Marshal(items)
 	if err != nil {
 		log.Panic(err)
 	}
